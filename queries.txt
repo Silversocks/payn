@@ -1,0 +1,23 @@
+pay:
+insert into transactions (From,To,Amount,Approved,LedgerID,Description) values({From},{To},{Amount},"NA",{LedgerID},{Description});
+
+approve:
+update transactions set Approved="A" where Tid={Tid}
+update users set Money=Money-(select amount where tid={tid}) where Uid=(select From from transactions where tid={tid});
+update users set Money=Money+(select amount where tid={tid}) where Uid=(select To from transactions where tid={tid});
+update Ledgers set Moneypool 
+
+initialise:
+select * from transactions where To={Uid} and Approved="NA"
+select * from transactions where To={Uid} and Approved="NA"
+
+signup:
+insert into users (Uname, Passhash, Money) values ({Uname}, {Passhash},{Money})
+
+login:
+hash password
+select from users Uname, Passhash where Uid={Uid}
+if hashes match, enable login
+
+see ledgers:
+select * from ledgers where Member={Uid}
