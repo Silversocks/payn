@@ -1,17 +1,17 @@
-pay:
+..pay:
 insert into transactions (From,To,Amount,Approved,LedgerID,Description) values({From},{To},{Amount},"NA",{LedgerID},{Description});
 
-approve:
+..approve:
 update transactions set Approved="A" where Tid={Tid}
 update users set Money=Money-(select amount where tid={tid}) where Uid=(select From from transactions where tid={tid});
 update users set Money=Money+(select amount where tid={tid}) where Uid=(select To from transactions where tid={tid});
 update Ledgers set Moneypool 
 
-initialise:
+..initialise:
 select * from transactions where To={Uid} and Approved="NA"
-select * from transactions where To={Uid} and Approved="NA"
+select * from transactions where From={Uid} and Approved='NA'
 
-signup:
+..signup:
 insert into users (Uname, Passhash, Money) values ({Uname}, {Passhash},{Money})
 
 login:
