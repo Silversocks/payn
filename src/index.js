@@ -1,4 +1,5 @@
 const express = require("express");
+const bcrypt = require('bcryptjs');
 const db = require('./routes/db'); // assumes this exports a connection or query function
 const app = express();
 const port = 8080;
@@ -72,34 +73,54 @@ app.post("/pay", async (req, res) => {
 });
 
 // Endpoint: Sign up a new user
-app.post("/signup/:Uid/:Passhash", async (req, res) => {
-    const { Uid, Passhash } = req.params;
+router.post("/signup", async (req, res) => {
+  const { Uid, Passhash } = req.body; // ⬅️ Use body, not params
 
-    try {
-        await db.query("INSERT INTO users (Uid, Passhash) VALUES (?, ?)", [Uid, Passhash]);
-        res.status(201).json({ message: "User registered." });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Signup failed" });
-    }
+  if (!Uid || !Passhash) {
+    return res.status(400).json({ error: "Uid and password required" });
+  }
+
+  try {
+    // Hash the password securely
+    const hashedPassword = await bcrypt.hash(Passhash, 10);
+
+    // Save user to the database
+    await db.query("INSERT INTO users (Uid, Passhash) VALUES (?, ?)", [Uid, hashedPassword]);
+
+    res.status(201).json({ message: "User registered." });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Signup failed" });
+  }
 });
 
 // Endpoint: Log in a user
-app.post("/login", async (req, res) => {
-    const { Uid, Passhash } = req.body;
+router.post("/login", async (req, res) => {
+  const { Uid, Passhash } = req.body;
 
-    try {
-        const [[user]] = await db.query("SELECT * FROM users WHERE Uid = ? AND Passhash = ?", [Uid, Passhash]);
+  try {
+    // Step 1: Find user by Uid
+    const [[user]] = await db.query("SELECT * FROM users WHERE Uid = ?", [Uid]);
 
-        if (!user) {
-            return res.status(401).json({ error: "Invalid credentials" });
-        }
-
-        res.status(200).json({ message: "Login successful" });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Login failed" });
+    if (!user) {
+      return res.status(401).json({ error: "Invalid credentials" });
     }
+
+    // Step 2: Compare hashed password
+    const isMatch = await bcrypt.compare(Passhash, user.Passhash); // Passhash = plain password sent by client
+
+    if (!isMatch) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    // Optional: Issue a JWT here for frontend login sessions
+    // const token = jwt.sign({ uid: user.Uid }, 'your_secret_key');
+
+    res.status(200).json({ message: "Login successful" }); // Add token if using JWT
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Login failed" });
+  }
 });
 
 // Start the server
