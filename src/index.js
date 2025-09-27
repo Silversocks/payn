@@ -1,17 +1,15 @@
 const express = require("express");
 const bcrypt = require('bcryptjs');
-const db = require('./routes/db'); // assumes this exports a connection or query function
+const db = require('./routes/db');
 const app = express();
 const port = 8080;
 
 app.use(express.json());
 
-// Endpoint: Initialize app for a user
 app.get("/initialiseapp/:uid/:passhash", async (req, res) => {
     const { uid, passhash } = req.params;
 
     try {
-        // Authenticate user
         const [user] = await db.query("SELECT * FROM users WHERE Uid = ? AND Passhash = ?", [uid, passhash]);
 
         if (!user) {
@@ -29,23 +27,18 @@ app.get("/initialiseapp/:uid/:passhash", async (req, res) => {
     }
 });
 
-// Endpoint: Approve a transaction
 app.post("/approve/:tid", async (req, res) => {
     const { tid } = req.params;
 
     try {
-        // Approve transaction
         await db.query("UPDATE transactions SET Approved = 'A' WHERE Tid = ?", [tid]);
 
-        // Get transaction details
         const [[transaction]] = await db.query("SELECT `From`, `To`, Amount FROM transactions WHERE Tid = ?", [tid]);
         const { From, To, Amount } = transaction;
 
-        // Deduct and add money
         await db.query("UPDATE users SET Money = Money - ? WHERE Uid = ?", [Amount, From]);
         await db.query("UPDATE users SET Money = Money + ? WHERE Uid = ?", [Amount, To]);
 
-        // You might need logic to update Moneypool in the correct ledger
         await db.query("UPDATE Ledgers SET Moneypool = Moneypool + ? WHERE LedgerID = (SELECT LedgerID FROM transactions WHERE Tid = ?)", [Amount, tid]);
 
         res.send("Transaction approved and balances updated.");
@@ -55,7 +48,6 @@ app.post("/approve/:tid", async (req, res) => {
     }
 });
 
-// Endpoint: Make a payment (create a transaction)
 app.post("/pay", async (req, res) => {
     const { From, To, Amount, LedgerID, Description } = req.body;
 
@@ -72,19 +64,16 @@ app.post("/pay", async (req, res) => {
     }
 });
 
-// Endpoint: Sign up a new user
-router.post("/signup", async (req, res) => {
-  const { Uid, Passhash } = req.body; // ⬅️ Use body, not params
+app.post("/signup", async (req, res) => {
+  const { Uid, Passhash } = req.body; 
 
   if (!Uid || !Passhash) {
     return res.status(400).json({ error: "Uid and password required" });
   }
 
   try {
-    // Hash the password securely
     const hashedPassword = await bcrypt.hash(Passhash, 10);
 
-    // Save user to the database
     await db.query("INSERT INTO users (Uid, Passhash) VALUES (?, ?)", [Uid, hashedPassword]);
 
     res.status(201).json({ message: "User registered." });
@@ -94,36 +83,68 @@ router.post("/signup", async (req, res) => {
   }
 });
 
-// Endpoint: Log in a user
-router.post("/login", async (req, res) => {
+app.post("/login", async (req, res) => {
   const { Uid, Passhash } = req.body;
 
   try {
-    // Step 1: Find user by Uid
     const [[user]] = await db.query("SELECT * FROM users WHERE Uid = ?", [Uid]);
 
     if (!user) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    // Step 2: Compare hashed password
-    const isMatch = await bcrypt.compare(Passhash, user.Passhash); // Passhash = plain password sent by client
+    const isMatch = await bcrypt.compare(Passhash, user.Passhash);
 
     if (!isMatch) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    // Optional: Issue a JWT here for frontend login sessions
-    // const token = jwt.sign({ uid: user.Uid }, 'your_secret_key');
-
-    res.status(200).json({ message: "Login successful" }); // Add token if using JWT
+    res.status(200).json({ message: "Login successful" });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Login failed" });
   }
 });
 
-// Start the server
+/* structure for payexternal{
+  "FromList": ["user1", "user2", "user3"],
+  "To": "recipient_user",
+  "Amount": 100,
+  "LedgerID": "L12345",
+  "Description": "Monthly contribution"
+}*/
+
+app.post("/payexternal", async (req, res) => {
+    const { FromList, To, Amount, LedgerID, Description } = req.body;
+
+    if (!Array.isArray(FromList) || FromList.length === 0) {
+        return res.status(400).json({ error: "FromList must be a non-empty array" });
+    } 
+
+    try {
+        await db.beginTransaction();
+        //after paying to external
+        for (const from of FromList) {
+            await db.query(`
+                INSERT INTO transactions (\`From\`, \`To\`, Amount, Approved, LedgerID, Description)
+                VALUES (?, ?, ?, 'NA', ?, ?)`,
+                [from, LedgerID, Amount, LedgerID, Description]
+            );
+        }
+
+        await db.commit();
+        res.status(201).json({ message: "Transactions created and pending approval." });
+
+    } catch (err) {
+        await db.rollback();
+        console.error(err);
+        res.status(500).json({ error: "Payment failed" });
+    } finally {
+        conn.release();
+    }
+});
+
+
 app.listen(port, () => {
     console.log(`Server started on port ${port}`);
 });
