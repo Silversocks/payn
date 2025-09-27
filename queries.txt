@@ -21,3 +21,5 @@ if hashes match, enable login
 
 see ledgers:
 select * from ledgers where Member={Uid}
+
+all table names are in CapitalCase

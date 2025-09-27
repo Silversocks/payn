@@ -106,13 +106,18 @@ app.post("/login", async (req, res) => {
   }
 });
 
+
+
 /* structure for payexternal{
   "FromList": ["user1", "user2", "user3"],
   "To": "recipient_user",
   "Amount": 100,
   "LedgerID": "L12345",
-  "Description": "Monthly contribution"
+  "Description1": "Monthly contribution",
+  "Amountpaid": int(paidamountbyfinaluser)
 }*/
+
+// 1for unresolved, 0 for resolved
 
 app.post("/payexternal", async (req, res) => {
     const { FromList, To, Amount, LedgerID, Description } = req.body;
@@ -126,11 +131,19 @@ app.post("/payexternal", async (req, res) => {
         //after paying to external
         for (const from of FromList) {
             await db.query(`
-                INSERT INTO transactions (\`From\`, \`To\`, Amount, Approved, LedgerID, Description)
-                VALUES (?, ?, ?, 'NA', ?, ?)`,
-                [from, LedgerID, Amount, LedgerID, Description]
+                INSERT INTO transactions (\`From\`, \`To\`, Amount, Resolved, LedgerID, Description)
+                VALUES (?, ?, ?, ?, ?, ?)`,
+                [from, LedgerID, Amount, 1, LedgerID, Description]
             );
         }
+        await db.query(`insert into transactions (\`From\`, \`To\`,Amount,LedgerID,Description)
+          values (?,?,?,?,?)`,
+          [from,"external", Amountpaid,LedgerID, Description])
+
+        await db.query(`insert into transactions (\`From\`, \`To\`, Amount, Resolved, LedgerID, Description)
+          values (?, ?, ?, ?, ?, ?)`,
+          [LedgerID, from, Amountpaid, 1, LedgerID, Description]
+        );
 
         await db.commit();
         res.status(201).json({ message: "Transactions created and pending approval." });
@@ -144,6 +157,9 @@ app.post("/payexternal", async (req, res) => {
     }
 });
 
+app.post("/resolve",(req,res)={
+  
+});
 
 app.listen(port, () => {
     console.log(`Server started on port ${port}`);
