@@ -10,14 +10,14 @@ app.get("/initialiseapp/:uid/:passhash", async (req, res) => {
     const { uid, passhash } = req.params;
 
     try {
-        const [user] = await db.query("SELECT * FROM users WHERE Uid = ? AND Passhash = ?", [uid, passhash]);
+        const [user] = await db.query("SELECT * FROM users WHERE Uid = ? AND Passhash = ?;", [uid, passhash]);
 
         if (!user) {
             return res.status(401).json({ error: "Authentication failed" });
         }
 
-        const [incoming] = await db.query("SELECT * FROM transactions WHERE `To` = ? AND Approved = 'NA'", [uid]);
-        const [outgoing] = await db.query("SELECT * FROM transactions WHERE `From` = ? AND Approved = 'NA'", [uid]);
+        const [incoming] = await db.query("SELECT * FROM transactions WHERE `To` = ? AND Approved = 'NA';", [uid]);
+        const [outgoing] = await db.query("SELECT * FROM transactions WHERE `From` = ? AND Approved = 'NA';", [uid]);
 
         res.json({ incomingt: incoming, outgoingt: outgoing });
 
@@ -31,15 +31,15 @@ app.post("/approve/:tid", async (req, res) => {
     const { tid } = req.params;
 
     try {
-        await db.query("UPDATE transactions SET Approved = 'A' WHERE Tid = ?", [tid]);
+        await db.query("UPDATE transactions SET Approved = 'A' WHERE Tid = ?;", [tid]);
 
-        const [[transaction]] = await db.query("SELECT `From`, `To`, Amount FROM transactions WHERE Tid = ?", [tid]);
+        const [[transaction]] = await db.query("SELECT `From`, `To`, Amount FROM transactions WHERE Tid = ?;", [tid]);
         const { From, To, Amount } = transaction;
 
-        await db.query("UPDATE users SET Money = Money - ? WHERE Uid = ?", [Amount, From]);
-        await db.query("UPDATE users SET Money = Money + ? WHERE Uid = ?", [Amount, To]);
+        await db.query("UPDATE users SET Money = Money - ? WHERE Uid = ?;", [Amount, From]);
+        await db.query("UPDATE users SET Money = Money + ? WHERE Uid = ?;", [Amount, To]);
 
-        await db.query("UPDATE Ledgers SET Moneypool = Moneypool + ? WHERE LedgerID = (SELECT LedgerID FROM transactions WHERE Tid = ?)", [Amount, tid]);
+        await db.query("UPDATE Ledgers SET Moneypool = Moneypool + ? WHERE LedgerID = (SELECT LedgerID FROM transactions WHERE Tid = ?);", [Amount, tid]);
 
         res.send("Transaction approved and balances updated.");
     } catch (err) {
@@ -54,7 +54,7 @@ app.post("/pay", async (req, res) => {
     try {
         await db.query(`
             INSERT INTO transactions (\`From\`, \`To\`, Amount, Approved, LedgerID, Description) 
-            VALUES (?, ?, ?, 'NA', ?, ?)`, 
+            VALUES (?, ?, ?, 'NA', ?, ?);`, 
             [From, To, Amount, LedgerID, Description]);
 
         res.status(201).json({ message: "Transaction created and pending approval." });
@@ -74,7 +74,7 @@ app.post("/signup", async (req, res) => {
   try {
     const hashedPassword = await bcrypt.hash(Passhash, 10);
 
-    await db.query("INSERT INTO users (Uid, Passhash) VALUES (?, ?)", [Uid, hashedPassword]);
+    await db.query("INSERT INTO users (Uid, Passhash) VALUES (?, ?);", [Uid, hashedPassword]);
 
     res.status(201).json({ message: "User registered." });
   } catch (err) {
@@ -87,7 +87,7 @@ app.post("/login", async (req, res) => {
   const { Uid, Passhash } = req.body;
 
   try {
-    const [[user]] = await db.query("SELECT * FROM users WHERE Uid = ?", [Uid]);
+    const [[user]] = await db.query("SELECT * FROM users WHERE Uid = ?;", [Uid]);
 
     if (!user) {
       return res.status(401).json({ error: "Invalid credentials" });
@@ -132,16 +132,16 @@ app.post("/payexternal", async (req, res) => {
         for (const from of FromList) {
             await db.query(`
                 INSERT INTO transactions (\`From\`, \`To\`, Amount, Resolved, LedgerID, Description)
-                VALUES (?, ?, ?, ?, ?, ?)`,
+                VALUES (?, ?, ?, ?, ?, ?);`,
                 [from, LedgerID, Amount, 1, LedgerID, Description]
             );
         }
         await db.query(`insert into transactions (\`From\`, \`To\`,Amount,LedgerID,Description)
-          values (?,?,?,?,?)`,
+          values (?,?,?,?,?);`,
           [from,"external", Amountpaid,LedgerID, Description])
 
         await db.query(`insert into transactions (\`From\`, \`To\`, Amount, Resolved, LedgerID, Description)
-          values (?, ?, ?, ?, ?, ?)`,
+          values (?, ?, ?, ?, ?, ?);`,
           [LedgerID, from, Amountpaid, 1, LedgerID, Description]
         );
 
@@ -157,8 +157,37 @@ app.post("/payexternal", async (req, res) => {
     }
 });
 
-app.post("/resolve",(req,res)={
-  
+//to the popup selecting friends, add ledger selection as well
+
+//req.amount has money in ledger
+app.post("/resolve",async (req,res)=>{
+  const [list]=await db.query("select Tid,Amount,To from Transactions where From=? and Resolved=1",[req.body.LedgerID]);
+  const [Amount]=await db.query("select Moneypool from Ledger where LedgerID=?",[req.body.LedgerID]);
+  const todo=[]
+  let to=0;
+  let i=0;
+  let j=0;
+  let q=[]
+  while(i<list.length){
+    element=list[i]
+    if(element.Amount>=Amount) break
+    if(element.Amount<Amount){
+      todo[to]={
+        Amount:element.Amount-Amount,
+        Tid:element.Tid
+      }
+    }
+    i++;
+  };
+  todo.forEach(async (element)=>{
+    if(element.Amount>0){
+      await db.query("update Transactions set Amount=? where Tid=?",[element.Amount,element.Tid]);
+    }
+    else if(element.Amount=0){
+      await db.query("update Transactions set Amount=?,Resolved=0 where Tid=?",[element.Amount,element.Tid]);
+    }
+  }
+  )
 });
 
 app.listen(port, () => {
