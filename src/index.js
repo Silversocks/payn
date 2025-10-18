@@ -6,6 +6,7 @@ const port = 8080;
 
 app.use(express.json());
 
+//inputs a session token or jwt, returns two lists of incoming and outgoing transactions
 app.get("/initialiseapp/:uid/:passhash", async (req, res) => {
     const { uid, passhash } = req.params;
 
@@ -27,7 +28,7 @@ app.get("/initialiseapp/:uid/:passhash", async (req, res) => {
     }
 });
 
-//the routes 'approve' and 'pay' are for direct payments. need not include if not necessary
+//the routes 'approve' and 'pay' are for direct payments. need not include if not necessary for groups
 app.post("/approve/:tid", async (req, res) => {
     const { tid } = req.params;
 
@@ -65,7 +66,7 @@ app.post("/pay", async (req, res) => {
     }
 });
 
-//needs uid, password sent ove http in json format
+//needs uid, password sent over http in json format
 app.post("/signup", async (req, res) => {
   const { Uid, Passhash } = req.body; 
 
