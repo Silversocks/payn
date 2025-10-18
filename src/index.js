@@ -16,8 +16,8 @@ app.get("/initialiseapp/:uid/:passhash", async (req, res) => {
             return res.status(401).json({ error: "Authentication failed" });
         }
 
-        const [incoming] = await db.query("SELECT * FROM transactions WHERE `To` = ? AND Approved = 'NA';", [uid]);
-        const [outgoing] = await db.query("SELECT * FROM transactions WHERE `From` = ? AND Approved = 'NA';", [uid]);
+        const [incoming] = await db.query("SELECT * FROM transactions WHERE Touid = ? AND Approved = 'NA';", [uid]);
+        const [outgoing] = await db.query("SELECT * FROM transactions WHERE Fromuid = ? AND Approved = 'NA';", [uid]);
 
         res.json({ incomingt: incoming, outgoingt: outgoing });
 
@@ -27,19 +27,20 @@ app.get("/initialiseapp/:uid/:passhash", async (req, res) => {
     }
 });
 
+//the routes 'approve' and 'pay' are for direct payments. need not include if not necessary
 app.post("/approve/:tid", async (req, res) => {
     const { tid } = req.params;
 
     try {
-        await db.query("UPDATE transactions SET Approved = 'A' WHERE Tid = ?;", [tid]);
+        await db.query("UPDATE transactions SET Approved = 0 WHERE Tid = ?;", [tid]);
 
-        const [[transaction]] = await db.query("SELECT `From`, `To`, Amount FROM transactions WHERE Tid = ?;", [tid]);
+        const [[transaction]] = await db.query("SELECT Fromuid, Touid, Amount FROM transactions WHERE Tid = ?;", [tid]);
         const { From, To, Amount } = transaction;
 
-        await db.query("UPDATE users SET Money = Money - ? WHERE Uid = ?;", [Amount, From]);
-        await db.query("UPDATE users SET Money = Money + ? WHERE Uid = ?;", [Amount, To]);
+        await db.query("UPDATE user SET Money = Money - ? WHERE Uid = ?;", [Amount, From]);
+        await db.query("UPDATE user SET Money = Money + ? WHERE Uid = ?;", [Amount, To]);
 
-        await db.query("UPDATE Ledgers SET Moneypool = Moneypool + ? WHERE LedgerID = (SELECT LedgerID FROM transactions WHERE Tid = ?);", [Amount, tid]);
+        await db.query("UPDATE Ledger SET Moneypool = Moneypool + ? WHERE LedgerID = (SELECT LedgerID FROM transactions WHERE Tid = ?);", [Amount, tid]);
 
         res.send("Transaction approved and balances updated.");
     } catch (err) {
@@ -64,25 +65,27 @@ app.post("/pay", async (req, res) => {
     }
 });
 
+//needs uid, password sent ove http in json format
 app.post("/signup", async (req, res) => {
   const { Uid, Passhash } = req.body; 
 
   if (!Uid || !Passhash) {
     return res.status(400).json({ error: "Uid and password required" });
   }
-
   try {
     const hashedPassword = await bcrypt.hash(Passhash, 10);
 
-    await db.query("INSERT INTO users (Uid, Passhash) VALUES (?, ?);", [Uid, hashedPassword]);
+    db.query("INSERT INTO user (Uid, Passhash) VALUES (?, ?);", [Uid, hashedPassword]);
 
     res.status(201).json({ message: "User registered." });
+    console.log(`user registered: ${Uid}`)
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Signup failed" });
   }
 });
 
+//needs uid, password sent over http, in json format
 app.post("/login", async (req, res) => {
   const { Uid, Passhash } = req.body;
 
@@ -111,84 +114,131 @@ app.post("/login", async (req, res) => {
 /* structure for payexternal{
   "FromList": ["user1", "user2", "user3"],
   "To": "recipient_user",
-  "Amount": 100,
+  "Amount": [100,200],(amount paid by individual)
   "LedgerID": "L12345",
   "Description1": "Monthly contribution",
   "Amountpaid": int(paidamountbyfinaluser)
 }*/
 
-// 1for unresolved, 0 for resolved
+// 1 for unresolved, 0 for resolved
 
 app.post("/payexternal", async (req, res) => {
-    const { FromList, To, Amount, LedgerID, Description } = req.body;
+    const conn=await db.getConnection()
+    const { FromList, To, Amount, LedgerID, Description, Amountpaid } = req.body;
 
     if (!Array.isArray(FromList) || FromList.length === 0) {
         return res.status(400).json({ error: "FromList must be a non-empty array" });
     } 
 
     try {
-        await db.beginTransaction();
+        await conn.beginTransaction();
         //after paying to external
         for (const from of FromList) {
-            await db.query(`
-                INSERT INTO transactions (\`From\`, \`To\`, Amount, Resolved, LedgerID, Description)
+            await conn.query(`
+                INSERT INTO transactions (Fromuid, Touid, Amount, Resolved, LedgerID, Description)
                 VALUES (?, ?, ?, ?, ?, ?);`,
-                [from, LedgerID, Amount, 1, LedgerID, Description]
+                [from, LedgerID, Amount[FromList.indexOf(from)], 1, LedgerID, Description]
             );
         }
-        await db.query(`insert into transactions (\`From\`, \`To\`,Amount,LedgerID,Description)
+        await conn.query(`insert into transactions (Fromuid, Touid,Amount,LedgerID,Description)
           values (?,?,?,?,?);`,
-          [from,"external", Amountpaid,LedgerID, Description])
+          [To,999, Amountpaid,LedgerID, Description])
+          //999 refers to an external
 
-        await db.query(`insert into transactions (\`From\`, \`To\`, Amount, Resolved, LedgerID, Description)
+        await conn.query(`insert into transactions (Fromuid, Touid, Amount, Resolved, LedgerID, Description)
           values (?, ?, ?, ?, ?, ?);`,
-          [LedgerID, from, Amountpaid, 1, LedgerID, Description]
+          [LedgerID, To, Amountpaid, 1, LedgerID, Description]
         );
 
-        await db.commit();
+        await conn.commit();
         res.status(201).json({ message: "Transactions created and pending approval." });
 
     } catch (err) {
-        await db.rollback();
+        await conn.rollback();
         console.error(err);
         res.status(500).json({ error: "Payment failed" });
-    } finally {
-        conn.release();
+    } finally{
+      (await conn).release()
     }
 });
 
 //to the popup selecting friends, add ledger selection as well
 
 //req.amount has money in ledger
-app.post("/resolve",async (req,res)=>{
-  const [list]=await db.query("select Tid,Amount,To from Transactions where From=? and Resolved=1",[req.body.LedgerID]);
-  const [Amount]=await db.query("select Moneypool from Ledger where LedgerID=?",[req.body.LedgerID]);
-  const todo=[]
-  let to=0;
-  let i=0;
-  let j=0;
-  let q=[]
-  while(i<list.length){
-    element=list[i]
-    if(element.Amount>=Amount) break
-    if(element.Amount<Amount){
-      todo[to]={
-        Amount:element.Amount-Amount,
-        Tid:element.Tid
+app.post("/resolve", async (req, res) => {
+  console.log("Received resolve request\n");
+  const conn = db; // assuming db is a promise-based pool (like mysql2/promise)
+
+  try {
+    // Fetch transactions and ledger
+    const [list] = await conn.query(
+      "SELECT Tid, Amount, Touid FROM Transactions WHERE Fromuid=? AND Resolved=1",
+      [req.body.LedgerID]
+    );
+    const [rows] = await conn.query(
+      "SELECT Moneypool FROM Ledger WHERE LedgerID=?",
+      [req.body.LedgerID]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Ledger not found" });
+    }
+
+    let remaining = rows[0].Moneypool;
+
+    // Nothing to resolve
+    if (remaining <= 0) {
+      return res.json({ message: "No balance to resolve" });
+    }
+
+    const updates = [];
+
+    for (const tx of list) {
+      if (remaining <= 0) break;
+
+      if (tx.Amount > remaining) {
+        // partially resolve
+        updates.push({
+          Tid: tx.Tid,
+          Amount: tx.Amount - remaining,
+          Resolved: 1,
+        });
+        remaining = 0;
+      } else {
+        // fully resolve this transaction
+        updates.push({
+          Tid: tx.Tid,
+          Amount: 0,
+          Resolved: 0,
+        });
+        remaining -= tx.Amount;
       }
     }
-    i++;
-  };
-  todo.forEach(async (element)=>{
-    if(element.Amount>0){
-      await db.query("update Transactions set Amount=? where Tid=?",[element.Amount,element.Tid]);
+
+    if (updates.length === 0) {
+      return res.json({ message: "No transactions updated" });
     }
-    else if(element.Amount=0){
-      await db.query("update Transactions set Amount=?,Resolved=0 where Tid=?",[element.Amount,element.Tid]);
-    }
+
+    // Perform all updates in one go (absolute GOATed optimisation by the one and only)
+    const updatePromises = updates.map(({ Amount, Tid, Resolved }) =>
+      conn.query("UPDATE Transactions SET Amount=?, Resolved=? WHERE Tid=?", [
+        Amount,
+        Resolved,
+        Tid,
+      ])
+    );
+
+    await Promise.all(updatePromises);
+
+    console.log("Finished resolving transactions");
+
+    res.json({ success: true, updates });
+  } catch (error) {
+    console.error("Error resolving:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
-  )
 });
+
 
 app.listen(port, () => {
     console.log(`Server started on port ${port}`);
